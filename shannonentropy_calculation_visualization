@@ -1,0 +1,411 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.ticker import MaxNLocator, FuncFormatter
+from collections import Counter
+from Bio import AlignIO
+
+def calculate_entropy(alignment_file):
+    """Calculate Shannon entropy per site from an aligned FASTA file."""
+    # Step 1: Load the alignment
+    alignment = AlignIO.read(alignment_file, "fasta")
+    num_sequences = len(alignment)
+    alignment_length = alignment.get_alignment_length()
+
+    entropy_per_site = []
+
+    # Step 2 & 3: Iterate over each site
+    for i in range(alignment_length):
+        column = alignment[:, i]  # Get all characters at position i
+        counts = Counter(column)
+
+        entropy = 0.0
+        for count in counts.values():
+            p_x = count / num_sequences
+            if p_x > 0:  # Avoid log(0)
+                entropy -= p_x * np.log2(p_x)
+
+        entropy_per_site.append(entropy)
+
+    # Step 4: Prepare output (e.g., list of tuples or DataFrame)
+    positions = list(range(1, alignment_length + 1))  # 1-indexed
+    result = list(zip(positions, entropy_per_site))
+    return result
+
+# ============ FUNCTION ============
+# file path
+rsvA_entropy = calculate_entropy("cds_translation.F.fasta")
+rsvB_entropy = calculate_entropy("cds_translation.F.fasta")
+
+
+print("First 10 positions and their entropy values:")
+for pos, entropy in rsvA_entropy[:10]:
+    print(f"Position {pos}: {entropy:.4f}")
+
+# To print all results
+print("\nAll entropy values:")
+for pos, entropy in rsvA_entropy:
+    print(f"{pos}\t{entropy:.6f}")
+
+
+
+# DataFrames for both strains
+df_A = pd.DataFrame(rsvA_entropy, columns=["Position", "Entropy"])
+df_B = pd.DataFrame(rsvB_entropy, columns=["Position", "Entropy"])
+
+# Define mAb binding sites with YOUR color choices
+mab_sites = {
+    'Nirsevimab': {
+        'regions': [
+            {'range': (62, 69)},    # F2 epitope
+            {'range': (196, 212)}   # F1 epitope (subset)
+        ],
+        'color': 'navy',
+        'alpha': 0.35
+    },
+    'Palivizumab': {
+        'range': (254, 277),
+        'color': 'darkorange',  
+        'alpha': 0.35
+    },
+    'Clesrovimab': {
+        'positions': [426, 427, 428, 429, 432, 433, 440, 441, 443, 445, 446, 447],
+        'color': 'gold', 
+        'alpha': 0.35
+    },
+    'RSM01': {
+        'positions': [68, 70, 71, 72, 201, 202, 203, 205, 206, 209, 210, 211, 212, 213, 214, 215, 216, 219],
+        'color': 'lightsteelblue', 
+        'alpha': 0.35
+    }
+}
+
+# Define overlapping sites between Nirsevimab and RSM01
+# Nirsevimab: 62-69, 196-212
+# RSM01: 68, 70-72, 201-203, 205-216, 219
+# Overlap: positions that appear in BOTH
+overlap_positions = []
+# Check 62-69 range
+for pos in range(62, 70):  # 62 to 69 inclusive
+    if pos in [68]:  # Only 68 is in RSM01's positions
+        overlap_positions.append(pos)
+
+# Check 196-212 range
+for pos in range(196, 213):  # 196 to 212 inclusive
+    if pos in [201, 202, 203, 205, 206, 209, 210, 211, 212]:
+        overlap_positions.append(pos)
+
+overlap_sites = {
+    'Nirsevimab & RSM01 Overlap': {
+        'positions': overlap_positions,
+        'color': 'salmon',
+        'alpha': 0.5  # Higher alpha for emphasis
+    }
+}
+
+print(f"Overlap positions between Nirsevimab and RSM01: {sorted(overlap_positions)}")
+print(f"Total overlap positions: {len(overlap_positions)}")
+
+# Create figure with both plots
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(22, 14), sharex=True)  # Increased figure size
+
+# Calculate common y-axis range
+max_entropy = max(df_A["Entropy"].max(), df_B["Entropy"].max())
+y_padding = max_entropy * 0.1
+common_ylim = (0, max_entropy + y_padding)
+
+# To draw antibody regions
+def draw_antibody_regions(ax, sites_dict, zorder_level=1):
+    """Draw antibody binding regions on the given axis WITHOUT borders."""
+    for name, info in sites_dict.items():
+        color = info['color']
+        alpha = info['alpha']
+        
+        if 'regions' in info:
+            for region in info['regions']:
+                if 'range' in region:
+                    start, end = region['range']
+                    # Remove edge/border with edgecolor='none'
+                    ax.axvspan(start - 0.5, end + 0.5, alpha=alpha, color=color, 
+                              edgecolor='none', linewidth=0, zorder=zorder_level)
+        elif 'range' in info:
+            start, end = info['range']
+            ax.axvspan(start - 0.5, end + 0.5, alpha=alpha, color=color,
+                      edgecolor='none', linewidth=0, zorder=zorder_level)
+        elif 'positions' in info:
+            for pos in info['positions']:
+                ax.axvspan(pos - 0.5, pos + 0.5, alpha=alpha, color=color,
+                          edgecolor='none', linewidth=0, zorder=zorder_level)
+
+draw_antibody_regions(ax1, mab_sites, zorder_level=1)
+draw_antibody_regions(ax2, mab_sites, zorder_level=1)
+
+# Draw overlap sites ON TOP of individual antibodies (zorder=1.5)
+draw_antibody_regions(ax1, overlap_sites, zorder_level=1.5)
+draw_antibody_regions(ax2, overlap_sites, zorder_level=1.5)
+
+bars1 = ax1.bar(df_A["Position"], df_A["Entropy"], 
+                color='black', alpha=0.85, label='RSV A', zorder=2)
+
+bars2 = ax2.bar(df_B["Position"], df_B["Entropy"], 
+                color='black', alpha=0.85, label='RSV B', zorder=2)
+threshold = 0.1
+
+# horizontal text annotations for high entropy sites 
+def annotate_high_entropy(ax, df, fontsize=12):  
+    """Annotate positions where entropy > threshold with simple black text (no bbox)."""
+    high_entropy = df[df["Entropy"] > threshold]
+    
+    for _, row in high_entropy.iterrows():
+        pos = row["Position"]
+        entropy = row["Entropy"]
+        
+        # text annotation at the top of the bar
+        ax.text(pos, entropy, str(int(pos)),  # Display position number as integer
+                ha='center', va='bottom',  # Center horizontally, place at bottom of text
+                fontsize=fontsize,  # Increased from 9 to 12
+                color='black',  # Black text
+                fontweight='bold',
+                rotation=0,  # Horizontal text (0 degrees)
+                zorder=4)
+# Add annotations to both plots
+annotate_high_entropy(ax1, df_A, fontsize=12)  # Increased fontsize
+annotate_high_entropy(ax2, df_B, fontsize=12)  # Increased fontsize
+
+# Set labels and titles with increased font sizes
+ax1.set_ylabel("Shannon Entropy", fontsize=18)  # Increased from 12 to 16
+ax1.set_title("RSV A F Protein Entropy", fontsize=18, pad=20)  # Increased from 14 to 18
+ax1.grid(axis='y', alpha=0.3, zorder=0)
+ax1.set_ylim(common_ylim)
+
+# Increase y-axis tick label size
+ax1.tick_params(axis='y', labelsize=14)  # Added for y-axis tick labels
+
+ax2.set_xlabel("Amino Acid Position", fontsize=18)  # Increased from 12 to 16
+ax2.set_ylabel("Shannon Entropy", fontsize=18)  # Increased from 12 to 16
+ax2.set_title("RSV B F Protein Entropy", fontsize=18, pad=20)  # Increased from 14 to 18
+ax2.grid(axis='y', alpha=0.3, zorder=0)
+ax2.set_ylim(common_ylim)
+
+# Increase y-axis and x-axis tick label sizes
+ax2.tick_params(axis='y', labelsize=14)  # Added for y-axis tick labels
+ax2.tick_params(axis='x', labelsize=14)  # Added for x-axis tick labels
+
+# Get all positions for setting x-axis limits
+all_positions = set()
+for name, info in mab_sites.items():
+    if 'regions' in info:
+        for region in info['regions']:
+            if 'range' in region:
+                start, end = region['range']
+                all_positions.update(range(start, end + 1))
+    elif 'range' in info:
+        start, end = info['range']
+        all_positions.update(range(start, end + 1))
+    elif 'positions' in info:
+        all_positions.update(info['positions'])
+
+for name, info in overlap_sites.items():
+    if 'positions' in info:
+        all_positions.update(info['positions'])
+
+all_positions.update(df_A["Position"])
+all_positions.update(df_B["Position"])
+
+# Set x-axis limits
+min_pos = min(all_positions)
+max_pos = max(all_positions)
+ax1.set_xlim(min_pos - 10, max_pos + 10)
+ax2.set_xlim(min_pos - 10, max_pos + 10)
+
+# Format x-axis tick labels as integers without decimals
+ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
+ax2.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+def format_int_tick(x, pos):
+    """Format tick label as integer without decimal point."""
+    return f'{int(x)}'
+
+ax1.xaxis.set_major_formatter(FuncFormatter(format_int_tick))
+ax2.xaxis.set_major_formatter(FuncFormatter(format_int_tick))
+
+# legend including the overlap with increased font sizes
+enhanced_legend = [
+    mpatches.Patch(facecolor=mab_sites['Nirsevimab']['color'], 
+                   alpha=mab_sites['Nirsevimab']['alpha'], 
+                   edgecolor='none',
+                   label='Nirsevimab'),
+    mpatches.Patch(facecolor=mab_sites['Palivizumab']['color'], 
+                   alpha=mab_sites['Palivizumab']['alpha'], 
+                   edgecolor='none',
+                   label='Palivizumab'),
+    mpatches.Patch(facecolor=mab_sites['Clesrovimab']['color'], 
+                   alpha=mab_sites['Clesrovimab']['alpha'], 
+                   edgecolor='none',
+                   label='Clesrovimab'),
+    mpatches.Patch(facecolor=mab_sites['RSM01']['color'], 
+                   alpha=mab_sites['RSM01']['alpha'], 
+                   edgecolor='none',
+                   label='RSM01'),
+    mpatches.Patch(facecolor=overlap_sites['Nirsevimab & RSM01 Overlap']['color'], 
+                   alpha=overlap_sites['Nirsevimab & RSM01 Overlap']['alpha'], 
+                   edgecolor='none',
+                   label='Nirsevimab & RSM01 Overlapping sites'),
+]
+
+# Add legend to the side with increased font sizes
+fig.legend(handles=enhanced_legend, 
+           loc='center left', 
+           bbox_to_anchor=(0.66, 0.88), 
+           fontsize=12,  # Increased from 10 to 12
+           title="Antibody Binding Sites",
+           title_fontsize=14,  # Increased from 12 to 14
+           framealpha=0.9)
+
+plt.tight_layout(rect=[0, 0, 0.85, 1])
+
+# Save the figure as PNG at 600 DPI
+output_filename = "RSV_entropy_analysis_600dpi.png"
+plt.savefig(output_filename, dpi=600, bbox_inches='tight', facecolor='white', 
+            edgecolor='none', pad_inches=0.1)
+print(f"Figure saved as: {output_filename} (600 DPI)")
+
+# Show the plot
+plt.show()
+
+# Print summary statistics
+print("\n" + "=" * 80)
+print("SUMMARY STATISTICS")
+print("=" * 80)
+
+print(f"\nOverall Statistics:")
+print(f"RSV A: {len(df_A)} positions, Mean entropy = {df_A['Entropy'].mean():.4f}")
+print(f"RSV B: {len(df_B)} positions, Mean entropy = {df_B['Entropy'].mean():.4f}")
+print(f"Difference (B-A): {df_B['Entropy'].mean() - df_A['Entropy'].mean():.4f}")
+
+# Overlap statistics
+print(f"\nOverlap Sites (Nirsevimab & RSM01):")
+print(f"Overlap positions: {sorted(overlap_positions)}")
+print(f"Total overlap positions: {len(overlap_positions)}")
+
+subset_A_overlap = df_A[df_A["Position"].isin(overlap_positions)]
+subset_B_overlap = df_B[df_B["Position"].isin(overlap_positions)]
+
+if len(subset_A_overlap) > 0 and len(subset_B_overlap) > 0:
+    avg_A_overlap = subset_A_overlap["Entropy"].mean()
+    avg_B_overlap = subset_B_overlap["Entropy"].mean()
+    conserved_A_overlap = (subset_A_overlap["Entropy"] < 0.1).sum()
+    conserved_B_overlap = (subset_B_overlap["Entropy"] < 0.1).sum()
+    high_entropy_A_overlap = (subset_A_overlap["Entropy"] > threshold).sum()
+    high_entropy_B_overlap = (subset_B_overlap["Entropy"] > threshold).sum()
+    
+    print(f"  RSV A: Mean = {avg_A_overlap:.4f}, Conserved = {conserved_A_overlap}/{len(overlap_positions)} ({conserved_A_overlap/len(overlap_positions)*100:.1f}%), High entropy (>0.3) = {high_entropy_A_overlap}")
+    print(f"  RSV B: Mean = {avg_B_overlap:.4f}, Conserved = {conserved_B_overlap}/{len(overlap_positions)} ({conserved_B_overlap/len(overlap_positions)*100:.1f}%), High entropy (>0.3) = {high_entropy_B_overlap}")
+    print(f"  Δ (B-A) = {avg_B_overlap - avg_A_overlap:.4f}")
+
+# High entropy sites analysis (entropy > 0.3) - Simple format
+print(f"\nHigh Entropy Sites (Entropy > {threshold}):")
+high_A = df_A[df_A["Entropy"] > threshold]
+high_B = df_B[df_B["Entropy"] > threshold]
+
+print(f"RSV A: {len(high_A)} positions with entropy > {threshold}") 
+if len(high_A) > 0:
+    high_A_positions = sorted(high_A['Position'].tolist())
+    # Simple space-separated format like "12 42 190 209 389 529"
+    positions_str = ' '.join(str(int(pos)) for pos in high_A_positions)
+    print(f"  Positions: {positions_str}")
+    print(f"  Max entropy: {high_A['Entropy'].max():.4f} at position {int(high_A.loc[high_A['Entropy'].idxmax(), 'Position'])}")
+
+print(f"RSV B: {len(high_B)} positions with entropy > {threshold}")
+if len(high_B) > 0:
+    high_B_positions = sorted(high_B['Position'].tolist())
+    # Simple space-separated format like "12 42 190 209 389 529"
+    positions_str = ' '.join(str(int(pos)) for pos in high_B_positions)
+    print(f"  Positions: {positions_str}")
+    print(f"  Max entropy: {high_B['Entropy'].max():.4f} at position {int(high_B.loc[high_B['Entropy'].idxmax(), 'Position'])}")
+
+# Individual MAb site statistics (NON-OVERLAP positions only)
+print(f"\nIndividual Monoclonal Antibody Binding Sites (NON-OVERLAP positions only):")
+color_mapping = {
+    'Nirsevimab': 'navy',
+    'Palivizumab': 'darkorange',
+    'Clesrovimab': 'gold',
+    'RSM01': 'lightsteelblue'
+}
+
+print("\nDetailed Antibody Site Positions:")
+print("-" * 50)
+
+for name, info in mab_sites.items():
+    print(f"\n{name}:")
+    if 'regions' in info:
+        for region in info['regions']:
+            if 'range' in region:
+                start, end = region['range']
+                print(f"  Range: {start}-{end}")
+    elif 'range' in info:
+        start, end = info['range']
+        print(f"  Range: {start}-{end}")
+    elif 'positions' in info:
+        positions = sorted(info['positions'])
+        # Simple space-separated format
+        positions_str = ' '.join(str(pos) for pos in positions)
+        print(f"  Positions: {positions_str}")
+
+print(f"\nOverlap Sites (Nirsevimab & RSM01):")
+overlap_str = ' '.join(str(pos) for pos in sorted(overlap_positions))
+print(f"  Positions: {overlap_str}")
+
+# Now print the antibody site statistics in the same format
+print("\n" + "-" * 50)
+print("Antibody Site Statistics (NON-OVERLAP positions only):")
+print("-" * 50)
+
+for name, info in mab_sites.items():
+    # Get positions for this antibody
+    positions = set()
+    if name == 'Nirsevimab':
+        for region in info['regions']:
+            if 'range' in region:
+                start, end = region['range']
+                positions.update(range(start, end + 1))
+    elif 'range' in info:
+        start, end = info['range']
+        positions.update(range(start, end + 1))
+    elif 'positions' in info:
+        positions.update(info['positions'])
+    
+    # Remove overlap positions for non-overlap statistics
+    non_overlap_positions = positions - set(overlap_positions)
+    
+    if non_overlap_positions:
+        subset_A = df_A[df_A["Position"].isin(non_overlap_positions)]
+        subset_B = df_B[df_B["Position"].isin(non_overlap_positions)]
+        
+        avg_A = subset_A["Entropy"].mean()
+        avg_B = subset_B["Entropy"].mean()
+        conserved_A = (subset_A["Entropy"] < 0.1).sum()
+        conserved_B = (subset_B["Entropy"] < 0.1).sum()
+        high_entropy_A = (subset_A["Entropy"] > threshold).sum()
+        high_entropy_B = (subset_B["Entropy"] > threshold).sum()
+        
+        color_name = color_mapping[name]
+        non_overlap_str = ' '.join(str(int(pos)) for pos in sorted(non_overlap_positions))
+        
+        print(f"\n{name} [{color_name}]: {len(non_overlap_positions)} positions (non-overlap)")
+        print(f"  Positions: {non_overlap_str}")
+        print(f"  RSV A: Mean = {avg_A:.4f}, Conserved = {conserved_A}/{len(non_overlap_positions)} ({conserved_A/len(non_overlap_positions)*100:.1f}%), High entropy (>0.3) = {high_entropy_A}")
+        print(f"  RSV B: Mean = {avg_B:.4f}, Conserved = {conserved_B}/{len(non_overlap_positions)} ({conserved_B/len(non_overlap_positions)*100:.1f}%), High entropy (>0.3) = {high_entropy_B}")
+        print(f"  Δ (B-A) = {avg_B - avg_A:.4f}")
+        
+        # Print specific high entropy positions in antibody sites if any
+        high_in_A_positions = subset_A[subset_A["Entropy"] > threshold]["Position"].tolist()
+        high_in_B_positions = subset_B[subset_B["Entropy"] > threshold]["Position"].tolist()
+        
+        if high_in_A_positions:
+            high_in_A_str = ' '.join(str(int(pos)) for pos in sorted(high_in_A_positions))
+            print(f"    RSV A high entropy positions: {high_in_A_str}")
+        if high_in_B_positions:
+            high_in_B_str = ' '.join(str(int(pos)) for pos in sorted(high_in_B_positions))
+            print(f"    RSV B high entropy positions: {high_in_B_str}")
