@@ -1,2 +1,3 @@
 # Next-Generation_RSV_Monoclonal-Antibody_with_high_barrier_to_resistance
-Title "A Next-Generation RSV Monoclonal Antibody With a High Barrier to Resistance to Support Durable and Equitable Global Immunoprophylaxis"
+Files regarding data sources and analyses performed to unveil the resistance barrier of the LMIC-focused candidate RSM01 relative to existing RSV mAbs by characterizing in vitro–selected escape mutants, their effects on viral fitness, the prevalence of associated mutations in circulating RSV sequences, and the susceptibility of contemporary global strains to RSM01. The results will be communicated in the paper entitled:
+"A Next-Generation RSV Monoclonal Antibody With a High Barrier to Resistance to Support Durable and Equitable Global Immunoprophylaxis"
