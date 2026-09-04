@@ -44,6 +44,7 @@ DB_B="rsvb_custom"
 
 MIN_AF=0.05
 MAX_AF=0.49
+MIN_DP=200
 SUBTYPE="both"
 BUILD_ONLY=0
 REBUILD=0
@@ -56,6 +57,7 @@ while [ $# -gt 0 ]; do
     --max-af)     MAX_AF="$2";  shift 2 ;;
     --build-only) BUILD_ONLY=1; shift ;;
     --rebuild)    REBUILD=1;    shift ;;
+    --min-dp)     MIN_DP="$2";    shift 2 ;;
     --vcf-suffix) VCF_SUFFIX="$2"; shift 2 ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
@@ -192,13 +194,13 @@ log "Annotated ${n_ok} sample(s), skipped ${n_skip}"
 # EXTRACT F-GENE MINOR VARIANTS
 # -----------------------------------------------------------------------------
 echo
-log "Extracting F-gene variants with ${MIN_AF} <= AF <= ${MAX_AF}"
+log "Extracting F-gene variants with ${MIN_AF} <= AF <= ${MAX_AF} and DP >= ${MIN_DP}"
 
-python3 - "$MAFS_DIR" "$OUT_DIR" "$MIN_AF" "$MAX_AF" << 'PYEOF'
+python3 - "$MAFS_DIR" "$OUT_DIR" "$MIN_AF" "$MAX_AF" "$MIN_DP" << 'PYEOF'
 import csv, gzip, re, sys
 from pathlib import Path
 
-mafs, outdir, min_af, max_af = Path(sys.argv[1]), Path(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4])
+mafs, outdir, min_af, max_af, min_dp = Path(sys.argv[1]), Path(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4]), int(sys.argv[5])
 
 ANN_FIELDS = ['Allele','Annotation','Annotation_Impact','Gene_Name','Gene_ID',
               'Feature_Type','Feature_ID','Transcript_BioType','Rank','HGVS_c',
@@ -270,7 +272,12 @@ for vcf in sorted(mafs.glob('MARMS_RSV*-*/variant_calling/*_prot_variants.ann.vc
 
             af = get_af(info, fk, sv)
             if af is None: continue
-            dp = info.get('DP','')
+            dp_raw = info.get('DP','')
+            try:
+                dp_int = int(dp_raw)
+            except (ValueError, TypeError):
+                dp_int = 0
+            dp = dp_raw
 
             for entry in info['ANN'].split(','):
                 parts = entry.split('|')
@@ -281,6 +288,7 @@ for vcf in sorted(mafs.glob('MARMS_RSV*-*/variant_calling/*_prot_variants.ann.vc
                 if gene.upper() != 'F': continue
                 totals['in_F'] += 1
                 if not (min_af <= af <= max_af): break
+                if dp_int < min_dp: break
                 totals['passed'] += 1
                 aac, aap = short_aa(ann.get('HGVS_p',''))
                 rows.append({'sample':sample,'subtype':st,'chrom':chrom,'pos':pos,
@@ -312,7 +320,7 @@ for st in ('A','B'):
 
 print()
 print(f"Totals: {totals['variants']} variants, {totals['with_ann']} annotated, "
-      f"{totals['in_F']} in F, {totals['passed']} within AF range")
+      f"{totals['in_F']} in F, {totals['passed']} passed AF+DP filters")
 if gene_names_seen:
     print('Gene names present in the annotations:', ', '.join(sorted(gene_names_seen)))
     if not any(g.upper()=='F' for g in gene_names_seen):
